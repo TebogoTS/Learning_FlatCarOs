@@ -1,0 +1,18 @@
+cluster:
+  name: lab02
+  domain: lab.test
+vars:
+  ssh_port: "2223"
+  # "true" installs the health gate (update_engine only marks a slot good after the
+  # critical service is up; otherwise the node reboots into the previous slot).
+  gate: "true"
+  # Seconds after systemd starts before an unhealthy boot triggers a rollback reboot.
+  # Keep this above your slowest legitimate critical-service start-up time.
+  gate_timeout: "120"
+  # Empty means the public update server. Set to http(s)://host:port/v1/update/ for Nebraska.
+  update_server: ""
+  update_group: stable
+nodes:
+  - name: lab02
+    role: node
+    mac: "52:54:00:77:02:01"

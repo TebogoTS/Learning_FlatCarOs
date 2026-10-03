@@ -1,0 +1,81 @@
+# Lab 03: load a custom system extension at first boot.
+#
+# The extension image is fetched by Ignition with a pinned SHA-256 (rendered from the file on
+# the host by nodegen), stored on the writable root under /opt/extensions, and linked into
+# /etc/extensions, where systemd-sysext finds it. See docs/06-extending-sysext.md.
+variant: flatcar
+version: 1.1.0
+
+passwd:
+  users:
+    - name: core
+      ssh_authorized_keys:
+        - {{ required "ssh_pubkey (set by the Makefile)" .Vars.ssh_pubkey }}
+
+storage:
+  files:
+    - path: /etc/hostname
+      mode: 0644
+      contents:
+        inline: {{ .Node.Name }}
+
+    - path: /etc/flatcar/update.conf
+      mode: 0644
+      overwrite: true
+      contents:
+        inline: |
+          SERVER=disabled
+
+    - path: /opt/extensions/flatcar-hello/flatcar-hello-{{ .Vars.sysext_tag }}.raw
+      mode: 0644
+      contents:
+        source: http://10.0.2.2:{{ .Vars.serve_port }}/flatcar-hello-{{ .Vars.sysext_tag }}.raw
+        verification:
+          hash: sha256-{{ sha256file (printf "out/flatcar-hello-%s.raw" .Vars.sysext_tag) }}
+
+    # --- Optional: in-place updates with systemd-sysupdate (make upgrade-sysupdate) ---
+    # Same shape as the bakery's generated transfer file, including Verify=false, which means
+    # sysupdate does not check a signature on SHA256SUMS. Integrity rests on your own host
+    # here; in production you would sign the index and set Verify=true (doc 06).
+    - path: /etc/sysupdate.flatcar-hello.d/flatcar-hello.conf
+      mode: 0644
+      contents:
+        inline: |
+          [Transfer]
+          Verify=false
+
+          [Source]
+          Type=url-file
+          Path=http://10.0.2.2:{{ .Vars.serve_port }}/
+          MatchPattern=flatcar-hello-@v.raw
+
+          [Target]
+          InstancesMax=3
+          Type=regular-file
+          Path=/opt/extensions/flatcar-hello
+          CurrentSymlink=/etc/extensions/flatcar-hello.raw
+    # sysupdate needs at least one transfer in its default config directory; this one never matches.
+    - path: /etc/sysupdate.d/noop.conf
+      mode: 0644
+      contents:
+        inline: |
+          [Source]
+          Type=regular-file
+          Path=/
+          MatchPattern=invalid@v.raw
+
+          [Target]
+          Type=regular-file
+          Path=/
+          MatchPattern=invalid@v.raw
+
+  links:
+    - path: /etc/extensions/flatcar-hello.raw
+      target: /opt/extensions/flatcar-hello/flatcar-hello-{{ .Vars.sysext_tag }}.raw
+      hard: false
+
+systemd:
+  units:
+    # No OS updates during this lab.
+    - name: locksmithd.service
+      mask: true

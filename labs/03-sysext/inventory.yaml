@@ -1,0 +1,14 @@
+cluster:
+  name: lab03
+  domain: lab.test
+vars:
+  ssh_port: "2224"
+  # Port of the host-side HTTP server (scripts/serve.sh). The guest reaches the host's
+  # loopback at 10.0.2.2 in QEMU user-mode networking.
+  serve_port: "8089"
+  # Which built image the node boots with; `make upgrade-manual` later moves it to v2.
+  sysext_tag: v1
+nodes:
+  - name: lab03
+    role: node
+    mac: "52:54:00:77:03:01"

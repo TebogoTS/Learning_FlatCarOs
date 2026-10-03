@@ -10,3 +10,4 @@ labs/**/state/
 labs/**/.state/
 labs/**/pki/
 labs/**/secrets/
+labs/03-sysext/out/

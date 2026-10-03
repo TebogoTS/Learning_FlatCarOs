@@ -1,0 +1,205 @@
+# Lab 02: updates, A/B switch, and rollback.
+#
+# The health gate below is adapted from the Flatcar learning series
+# ("Immutable OS, Boot Process, In-Place Updates, and Automating Roll-Back", Apache-2.0),
+# with one change: is-first-boot-after-upgrade.service is Type=oneshot with
+# RemainAfterExit so that units ordered After= it really wait for the script to finish.
+variant: flatcar
+version: 1.1.0
+
+passwd:
+  users:
+    - name: core
+      ssh_authorized_keys:
+        - {{ required "ssh_pubkey (set by the Makefile)" .Vars.ssh_pubkey }}
+
+storage:
+  files:
+    - path: /etc/hostname
+      mode: 0644
+      contents:
+        inline: {{ .Node.Name }}
+
+    # Updates ON for this lab: follow the stable group from the public (or your) server.
+    # We still mask locksmithd below, so the node never reboots on its own: you reboot it.
+    - path: /etc/flatcar/update.conf
+      mode: 0644
+      overwrite: true
+      contents:
+        inline: |
+          GROUP={{ .Vars.update_group }}
+{{- if .Vars.update_server }}
+          SERVER={{ .Vars.update_server }}
+{{- end }}
+{{- if eq .Vars.gate "true" }}
+
+    # Decides whether this boot is the first one after an OS update. If it is not, it
+    # raises the healthy flag at once; if it is, the flag waits for the critical service.
+    - path: /opt/bin/detect-first-boot-after-upgrade.sh
+      mode: 0500
+      contents:
+        inline: |
+          #!/bin/bash
+          healthy_flag_file="${1:-/run/first-boot-healthy}"
+          get_part_attr() {
+            local partition="$1" attribute="$2"
+            cgpt show "${partition}" \
+              | sed -nE "s/.*Attr:.*${attribute}=([0-9]+)([[:space:]]|\$).*/\1/p"
+          }
+          is_first_boot_after_upgrade() {
+            active_part="$(rootdev -s /usr)"
+            active_prio="$(get_part_attr "${active_part}" priority)"
+            spare_part="$(cgpt find -t flatcar-usr 2>/dev/null | grep -v "${active_part}")"
+            spare_prio="$(get_part_attr "${spare_part}" priority)"
+            # The running /usr must be the highest priority (a manual rollback breaks this).
+            if [[ ${active_prio:-0} -le ${spare_prio:-0} ]]; then
+              echo "Active ${active_part} (prio ${active_prio:-0}) is not above spare ${spare_part} (prio ${spare_prio:-0})."
+              return 1
+            fi
+            # An earlier boot already confirmed this slot.
+            if [[ "$(get_part_attr "${active_part}" successful)" -eq 1 ]]; then
+              echo "${active_part} was already marked successful by an earlier boot."
+              return 1
+            fi
+            return 0
+          }
+          if ! is_first_boot_after_upgrade; then
+            echo "No first boot after an upgrade; marking healthy."
+            touch "${healthy_flag_file}"
+            exit 0
+          fi
+          echo "First boot after an upgrade: waiting for the critical service."
+{{- end }}
+
+    # Present only so you can create/remove the fail marker in the lab; see the README.
+    - path: /etc/lab/README
+      mode: 0644
+      contents:
+        inline: |
+          touch /etc/lab/critical-fail  -> lab-critical.service refuses to start
+          rm    /etc/lab/critical-fail  -> it starts again
+
+systemd:
+  units:
+    # You decide when to reboot in this lab.
+    - name: locksmithd.service
+      mask: true
+
+    # Records which USR slot the node first booted from, so verify.sh can prove the A/B switch.
+    - name: lab-first-usr.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Record the USR slot of the first boot
+        ConditionPathExists=!/var/lib/lab/first-usr
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        StateDirectory=lab
+        ExecStart=/bin/sh -c 'rootdev -s /usr > /var/lib/lab/first-usr'
+
+        [Install]
+        WantedBy=multi-user.target
+
+    # The critical service. Fails when /etc/lab/critical-fail exists, which survives an
+    # update because /etc is on ROOT, so you can simulate "the new OS breaks my workload".
+    - name: lab-critical.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Lab 02: a critical service that gates update confirmation
+
+        [Service]
+        ExecStartPre=/usr/bin/test ! -f /etc/lab/critical-fail
+        ExecStart=/usr/bin/sleep infinity
+        Restart=on-failure
+        RestartSec=3
+
+        [Install]
+        WantedBy=multi-user.target
+{{- if eq .Vars.gate "true" }}
+
+    - name: is-first-boot-after-upgrade.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Detect whether this is the first boot after an OS upgrade
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        ExecStart=/opt/bin/detect-first-boot-after-upgrade.sh
+
+        [Install]
+        WantedBy=multi-user.target
+
+    - name: first-boot-healthcheck.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Mark the first boot after an OS upgrade healthy once critical services are up
+        After=is-first-boot-after-upgrade.service
+        Requires=is-first-boot-after-upgrade.service
+        ConditionPathExists=!/run/first-boot-healthy
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        ExecStartPre=/usr/bin/echo "critical services are up; start-up is healthy"
+        ExecStart=/usr/bin/touch /run/first-boot-healthy
+
+        [Install]
+        WantedBy=multi-user.target
+      dropins:
+        - name: lab-critical.conf
+          contents: |
+            [Unit]
+            Requires=lab-critical.service
+            After=lab-critical.service
+
+    # Start update-engine only once the healthy flag exists. update-engine is what marks a
+    # slot successful, so an unhealthy boot never confirms the new slot.
+    - name: first-boot-healthy.path
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Fires when the boot is healthy (no OS upgrade, or a healthy first boot after one)
+
+        [Path]
+        PathExists=/run/first-boot-healthy
+        Unit=update-engine.service
+
+        [Install]
+        WantedBy=multi-user.target
+
+    - name: update-engine.service
+      dropins:
+        - name: first-boot-healthy-must-exist.conf
+          contents: |
+            [Unit]
+            ConditionPathExists=/run/first-boot-healthy
+
+    - name: reboot-after-unhealthy-upgrade.timer
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Roll back (by rebooting) when the boot after an upgrade is unhealthy
+
+        [Timer]
+        OnStartupSec={{ .Vars.gate_timeout }}
+
+        [Install]
+        WantedBy=timers.target
+
+    - name: reboot-after-unhealthy-upgrade.service
+      contents: |
+        [Unit]
+        Description=Reboot to trigger the A/B fallback when the boot is unhealthy
+        ConditionPathExists=!/run/first-boot-healthy
+
+        [Service]
+        Type=oneshot
+        ExecStartPre=/usr/bin/echo "WARNING: unhealthy boot after an OS upgrade; rebooting so GRUB falls back"
+        ExecStart=/usr/bin/systemctl reboot
+{{- end }}
