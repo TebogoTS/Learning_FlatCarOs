@@ -65,6 +65,10 @@ check: tools butane render-ci ## Transpile everything with the pinned Butane and
 .PHONY: validate
 validate: test selftest lint-sh check ## Run every check that needs no VM
 
+.PHONY: check-mermaid
+check-mermaid: ## Parse-check every Mermaid diagram (needs node, npm, a Chromium; see the script header)
+	@tools/scripts/check-mermaid.sh
+
 .PHONY: clean
 clean: ## Remove build outputs (keeps lab VM state)
 	rm -rf build $(BIN)

@@ -108,35 +108,39 @@ The essential Ignition pieces are the same for both node types: pinned artifacts
 Flatcar needs out of the way.
 
 ```yaml
-# excerpt: labs/05-rke2-on-flatcar/butane/server.bu.tmpl (variables rendered by tools/nodegen)
+# excerpt, rendered: labs/05-rke2-on-flatcar/butane/{common.tmpl,server.bu.tmpl} (variables filled by tools/nodegen)
 variant: flatcar
 version: 1.1.0
 storage:
-  directories:
-    - { path: /etc/rancher/rke2, mode: 0700 }
-    - { path: /opt/rke2-artifacts, mode: 0755 }
+  links:
+    - { path: /etc/extensions/docker-flatcar.raw,     target: /dev/null, overwrite: true }
+    - { path: /etc/extensions/containerd-flatcar.raw, target: /dev/null, overwrite: true }
   files:
     - path: /opt/rke2-artifacts/install.sh
       mode: 0755
       contents:
-        source: https://raw.githubusercontent.com/rancher/rke2/{{ .RKE2VersionURL }}/install.sh
-        verification: { hash: "sha256-{{ .InstallScriptSHA256 }}" }
+        source: https://raw.githubusercontent.com/rancher/rke2/v1.36.3%2Brke2r1/install.sh
+        verification: { hash: "sha256-42983c86d1da64a92061d83afb57630cedd69241989f1b0673f3db6c3d92ee6b" }
     - path: /opt/rke2-artifacts/rke2.linux-amd64.tar.gz
       contents:
-        source: https://github.com/rancher/rke2/releases/download/{{ .RKE2VersionURL }}/rke2.linux-amd64.tar.gz
-        verification: { hash: "sha256-{{ .TarballSHA256 }}" }
+        source: https://github.com/rancher/rke2/releases/download/v1.36.3%2Brke2r1/rke2.linux-amd64.tar.gz
+        verification: { hash: "sha256-5bbc6315131af7f435385d0ed63f14788ef2a858ac482f8b9146cf3a1a1582d3" }
     - path: /opt/rke2-artifacts/sha256sum-amd64.txt
       contents:
-        source: https://github.com/rancher/rke2/releases/download/{{ .RKE2VersionURL }}/sha256sum-amd64.txt
+        source: https://github.com/rancher/rke2/releases/download/v1.36.3%2Brke2r1/sha256sum-amd64.txt
+        verification: { hash: "sha256-cdca77b9714aae5cf2052c1b01142ef75e609e0165ca8ad63b4c2ab034eb5ce3" }
     - path: /etc/rancher/rke2/config.yaml
       mode: 0600
       contents:
         inline: |
-          token: {{ .Token }}
-          node-name: {{ .Name }}
-          tls-san: [{{ .ServerIP }}]
+          token: <per-run pre-shared token>
+          node-name: rke2-server
+          tls-san:
+            - 10.77.0.30
 systemd:
   units:
+    - name: locksmithd.service
+      mask: true
     - name: rke2-install.service
       enabled: true
       contents: |
@@ -148,17 +152,22 @@ systemd:
         [Service]
         Type=oneshot
         RemainAfterExit=yes
-        Environment=INSTALL_RKE2_ARTIFACT_PATH=/opt/rke2-artifacts INSTALL_RKE2_TAR_PREFIX=/opt/rke2
-        Environment=INSTALL_RKE2_METHOD=tar INSTALL_RKE2_TYPE=server INSTALL_RKE2_SKIP_FAPOLICY=true
+        Environment=INSTALL_RKE2_ARTIFACT_PATH=/opt/rke2-artifacts
+        Environment=INSTALL_RKE2_TAR_PREFIX=/opt/rke2
+        Environment=INSTALL_RKE2_METHOD=tar
+        Environment=INSTALL_RKE2_TYPE=server
+        Environment=INSTALL_RKE2_SKIP_FAPOLICY=true
         ExecStart=/usr/bin/sh /opt/rke2-artifacts/install.sh
         ExecStartPost=/usr/bin/systemctl enable --now --no-block rke2-server.service
         [Install]
         WantedBy=multi-user.target
 ```
 
+I ran the real `install.sh` from this lab against these pinned files in a temporary prefix: it verified the tarball, unpacked it, rewrote the unit's paths to the prefix, and moved the unit to `/etc/systemd/system` (it could not talk to systemd in my sandbox). Booting it on Flatcar is the part still unverified.
+
 Why each piece is there:
 
-- **Pinned, hash-verified artifacts instead of `curl get.rke2.io | sh`.** The live script resolves versions from a channel service at run time, so two nodes provisioned a day apart can run different versions, and nothing is verified before it runs as root. Fetching `install.sh` from a tagged commit with an Ignition hash, and the tarball with its published SHA-256 (which `install.sh` re-verifies against the checksum file), makes the node's RKE2 version a function of the config. The same files are what an air-gapped site mirrors.
+- **Pinned, hash-verified artifacts instead of `curl get.rke2.io | sh`.** The live script resolves versions from a channel service at run time, so two nodes provisioned a day apart can run different versions, and nothing is verified before it runs as root. Fetching `install.sh` from a tagged commit with an Ignition hash, and the tarball with its published SHA-256 (which `install.sh` re-verifies against the checksum file), makes the node's RKE2 version a function of the config. The checksum file is pinned too, because `install.sh` trusts whatever that file says when `INSTALL_RKE2_ARTIFACT_PATH` is set (it copies the file and compares the tarball against it), so an unpinned checksum file would verify nothing. The same files are what an air-gapped site mirrors.
 - **`INSTALL_RKE2_TAR_PREFIX=/opt/rke2` set explicitly.** The script would pick it automatically on a read-only `/usr/local`, but an explicit value means the config does not depend on a probe whose result is an inference about Flatcar's filesystem.
 - **`INSTALL_RKE2_METHOD=tar`.** Avoids any package-manager detection.
 - **A one-shot unit with a `ConditionPathExists` guard.** Ignition cannot untar or run scripts, so the install must be a unit, and the guard makes it idempotent across reboots.

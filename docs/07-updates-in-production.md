@@ -96,7 +96,7 @@ sequenceDiagram
         A->>R: update-agent sees D-Bus status, sets annotation reboot-needed=true
         R->>R: update-operator picks ONE node, checks reboot window and before-reboot annotations
         R->>K: annotation reboot-ok=true
-        R->>K: agent cordons and drains (evict, honours PDBs; optional force-drain)
+        R->>K: agent cordons and drains (evict, honours PDBs, optional force-drain)
         K->>W: evict pods respecting PodDisruptionBudgets
         R->>A: agent reboots node
     else kured (locksmithd masked)

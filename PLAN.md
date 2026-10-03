@@ -1,6 +1,6 @@
 # PLAN.md — Flatcar deep-dive learning repo
 
-Status: **draft for review. No docs or labs written yet.** I will not proceed until you approve or amend this.
+Status: **historical.** This is the plan I wrote before starting; the repository has since been built, and the README is the current entry point. Its open questions were answered as: Kubernetes/RKE2 1.36.x, plain QEMU, generic compliance content; access to the Flatcar release hosts was not obtained, which is why no VM was booted (see `labs/README.md`).
 
 ## 1. What I found about my research environment (this affects accuracy)
 
