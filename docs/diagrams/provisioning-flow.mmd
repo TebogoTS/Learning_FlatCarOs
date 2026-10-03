@@ -1,0 +1,22 @@
+%% Provisioning flow: Butane source to a running node, per platform.
+%% Delivery mechanisms verified in: Flatcar libvirt/QEMU/VMware/AWS docs, qemu_template.sh,
+%% Ignition supported-platforms.md and the AWS provider source.
+flowchart LR
+    subgraph author["Authoring (your repo, CI)"]
+        bu["Butane YAML<br/>variant: flatcar, version: 1.1.0"] --> tpl["optional templating<br/>(nodegen: per-node values)"]
+        tpl --> bt["butane --strict --pretty<br/>pinned v0.29.0"]
+        bt --> ign["Ignition JSON, spec 3.4.0"]
+    end
+    ign --> kvm["QEMU / KVM<br/>-fw_cfg name=opt/org.flatcar-linux/config,file=...<br/>(libvirt: --qemu-commandline or sys_info fw_cfg)"]
+    ign --> vsp["vSphere<br/>guestinfo.ignition.config.data (base64 or gz+base64)<br/>+ .encoding, or .config.url"]
+    ign --> aws["AWS EC2<br/>user data (raw JSON), read via IMDS<br/>large configs: tiny stub + merge from s3://"]
+    ign --> bm["Bare metal / PXE<br/>ignition.config.url=... + flatcar.first_boot=1"]
+    kvm --> boot
+    vsp --> boot
+    aws --> boot
+    bm --> boot
+    boot["Node first boot<br/>GRUB sets flatcar.first_boot=detected"] --> ig["initrd: Ignition reads flatcar.oem.id,<br/>fetches platform + user config"]
+    ig --> res{"every declared resource<br/>fetched and applied?"}
+    res -- yes --> run["pivot root, units start;<br/>Ignition never runs again<br/>(unless flatcar-reset / first_boot flag)"]
+    res -- no --> fail["boot fails (emergency shell):<br/>'machine specified or no machine'"]
+    run --> dyn["runtime data: afterburn / coreos-metadata<br/>writes /run/metadata/flatcar (COREOS_* vars)"]

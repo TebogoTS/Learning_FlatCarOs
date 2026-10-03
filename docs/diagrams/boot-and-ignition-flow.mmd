@@ -1,0 +1,26 @@
+%% Boot and Ignition flow on Flatcar. Facts: GRUB config in flatcar/scripts build_library/grub.cfg,
+%% initrd units in flatcar/bootengine, Flatcar boot-process doc. Kernel arg names are Flatcar's
+%% (flatcar.first_boot, flatcar.oem.id), not upstream Ignition's (ignition.firstboot).
+flowchart TD
+    fw["Firmware: UEFI (or BIOS + GRUB stub)"] --> grub["GRUB reads grub.cfg from EFI-SYSTEM"]
+    grub --> oemcfg{"secure_boot == 0 and<br/>OEM partition has grub.cfg?"}
+    oemcfg -- yes --> srcoem["source OEM grub.cfg<br/>(sets oem_id, linux_append, ...)"]
+    oemcfg -- no --> fb
+    srcoem --> fb{"EFI-SYSTEM has<br/>flatcar/first_boot<br/>(or coreos/first_boot)?"}
+    fb -- yes --> fbset["add kernel arg<br/>flatcar.first_boot=detected"]
+    fb -- no --> sel
+    fbset --> sel["gptprio.next picks USR-A or USR-B<br/>from priority / tries / successful"]
+    sel --> kern["load /flatcar/vmlinuz-a or -b + initrd<br/>cmdline: mount.usrflags=ro root=LABEL=ROOT<br/>+ usr=PARTUUID=... + verity hash"]
+    kern --> initrd["initramfs (dracut + bootengine)"]
+    initrd --> usr["set up dm-verity device, mount USR at /sysusr<br/>(tools too big for the initrd run from there)"]
+    usr --> first{"flatcar.first_boot set?"}
+    first -- no --> pivot
+    first -- yes --> net["start networkd (DHCP) so Ignition can fetch remote config"]
+    net --> ign["Ignition: read flatcar.oem.id, fetch OEM + user config"]
+    ign --> disks["Ignition: disks, partitions, filesystems<br/>(ROOT resized to fill disk)"]
+    disks --> tmp["systemd-tmpfiles populates the root FS"]
+    tmp --> files["Ignition: users, files, links, units"]
+    files --> rm["delete flatcar/first_boot from EFI-SYSTEM"]
+    rm --> setup["initrd-setup-root-after-ignition:<br/>OEM sysext links, enabled-sysext.conf downloads,<br/>confext + sysext merge"]
+    setup --> pivot["pivot root into ROOT, systemd starts"]
+    pivot --> ue["update-engine starts; after it has run 1-2 minutes<br/>(docs state both) flatcar-setgoodroot marks the slot successful"]

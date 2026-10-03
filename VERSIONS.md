@@ -1,0 +1,121 @@
+# VERSIONS.md — pinned versions for every lab
+
+Everything in `labs/` is pinned to the versions below. "Verified" means I read the value from a primary source
+on **2026-10-03** (source and commit in the last column). "Not verified" means I could not read the primary source
+from the authoring environment and you must confirm it before relying on it.
+
+> ⚠️ Verify: the authoring sandbox could not reach `*.release.flatcar-linux.net`, `www.flatcar.org`, `docs.rke2.io` or
+> `extensions.flatcar.org`. Channel versions were read from the Flatcar website repo's release data, which the
+> website build generates from the release feed. Image/payload availability and download checksums were **not** tested.
+
+## Flatcar Container Linux
+
+| Item | Pin | Status | Source |
+|---|---|---|---|
+| Lab OS release (Stable) | **4757.2.1** | Verified (channel head on 2026-09-29) | [`data/releases/stable/current.yml`][fw-data] @ `415d66a` |
+| Older release for update/rollback lab | **4593.2.5** (previous Stable major) | Version exists in release data; image availability not tested | [`data/releases/stable/`][fw-data] |
+| Alpha head | 4820.0.1 | Verified, informational | same |
+| Beta head | 4790.1.1 | Verified, informational | same |
+| LTS head (stream 2024) | 4081.3.10 | Verified, informational | same |
+| Architecture | amd64 | — | — |
+| Stable 4757.2.1 bundles | kernel 6.12.111, containerd 2.2.5, Docker 28.2.2, systemd 260, Ignition 2.24.0 | Verified | same |
+| LTS 4081.3.10 bundles | kernel 6.6.150, containerd 1.7.21, Docker 26.1.0, systemd 255, Ignition 2.19.0 | Verified | same |
+
+Behavior boundary you must know about (see doc 04 and doc 06): `/etc` as a systemd-confext and sysext mounting in the
+initrd first appear in Alpha **4628.0.0** / Beta 4628.1.0, and are present in Stable **4757.2.0** but not in Stable
+4593.2.5 or LTS 4081.x. Source: release data `grep -il confext data/releases/*/*.yml` and
+[`changelog/changes/2025-12-12-default-systemd-confext.md`][scripts-confext]. The update lab (02) deliberately crosses this boundary.
+
+## Butane / Ignition
+
+| Item | Pin | Status | Source |
+|---|---|---|---|
+| Butane | **v0.29.0** (binary SHA-256 below) | Verified: tag exists, binary downloaded and ran | `git ls-remote` on `coreos/butane` |
+| Butane variant / spec version | `variant: flatcar`, `version: 1.1.0` | Verified (stable spec; `1.2.0-experimental` exists and is not used) | [`docs/specs.md`][butane-specs] @ `cb34e12` |
+| Ignition spec emitted | **3.4.0** | Verified (`ToIgn3_4`) | [`config/flatcar/v1_1/translate.go`][butane-translate] |
+| Ignition version needed for spec 3.4.0 | ≥ 2.15.0 | Verified | [`docs/specs.md`][ignition-specs] @ `9417372` |
+| Ignition inside Stable 4757.2.1 / LTS 4081.3.10 | 2.24.0 / 2.19.0 | Verified | release data |
+
+Butane binary used by the Makefile (`tools/bin/butane`):
+`butane-x86_64-unknown-linux-gnu` from the `v0.29.0` GitHub release, SHA-256
+`53a20d820fbaa7fda4f1afd1814974badc8e448db4c151d3f1ba005dc29bc4c9` (computed on first download in the authoring
+session; the release also publishes a detached signature — ⚠️ Verify the signature against Butane's published key
+before treating this hash as trusted).
+
+## RKE2 / Kubernetes (labs 05 and doc 10)
+
+You asked for 1.36.x. Both RKE2 tags below exist (`git ls-remote` on `rancher/rke2`).
+
+| Item | Pin | Status |
+|---|---|---|
+| RKE2 start version | `v1.36.3+rke2r1` | Tag verified |
+| RKE2 upgrade target | `v1.36.5+rke2r1` (latest 1.36.x tag) | Tag verified |
+| Kubernetes in those releases | v1.36.3 → v1.36.5 | ⚠️ Verify against the RKE2 release notes; Kubernetes `v1.36.5` tag exists upstream |
+| system-upgrade-controller | `v0.20.2` (latest tag found) | Tag verified; ⚠️ Verify compatibility with the Kubernetes version |
+| rke2-upgrade image tag | `v1.36.5-rke2r1` | ⚠️ Verify the tag exists on Docker Hub (`rancher/rke2-upgrade`); image tags replace `+` with `-` |
+| RKE2 sysext (bakery) | `rke2-v1.36.x+rke2rN-x86-64.raw` | ⚠️ Verify: bakery docs show `v1.36.1+rke2r2` as the example; available builds live in the bakery `rke2` metadata release |
+| Default CNI | Canal (RKE2 default) | Documented in RKE2 requirements page |
+
+Upgrading `v1.36.3` → `v1.36.5` is a patch upgrade within one minor, so the Kubernetes version-skew policy is not exercised.
+
+## Kubernetes the Hard Way on Flatcar (lab 04 and doc 12)
+
+| Item | Pin | Status |
+|---|---|---|
+| KTHW upstream | `kelseyhightower/kubernetes-the-hard-way` @ `52eb26d` (13 chapters, jumpbox model) | Verified; upstream targets Kubernetes v1.32.3 on Debian, so version drift is deliberate |
+| Kubernetes | **v1.36.5** (matches the RKE2 upgrade target) | Tag verified |
+| containerd | the one built into Flatcar Stable 4757.2.1 (**2.2.5**, `containerd-flatcar` sysext) | Verified |
+| runc | built into Flatcar (version not read) | ⚠️ Verify with `runc --version` on the node |
+| etcd | upstream `v3.6.x`/`v3.7.x` tags exist; Flatcar's build also lists `dev-db/etcd` and `etcd-wrapper` in its base package list (tree has 3.4.31 … 3.7.1 ebuilds) | ⚠️ Verify which etcd version is in the Stable 4757.2.1 image with `etcd --version`. Lab 04 uses a **pinned upstream binary** from `/opt/bin` for reproducibility; record the patch release you choose in `labs/04-kthw-on-flatcar/versions.env` |
+| CNI plugins | `v1.9.1` | Tag verified |
+| crictl | Flatcar's base package list includes `app-containers/cri-tools` (tree has 1.33–1.37 ebuilds), so `crictl` is already on the node | ⚠️ Verify the shipped version with `crictl --version`; no download needed in lab 04 |
+| Pod networking | KTHW model: bridge CNI + static routes (no overlay) | By design, see doc 12 |
+
+## Cluster API (docs 09 and lab 06)
+
+| Item | Pin | Status |
+|---|---|---|
+| Cluster API core | v1.14.2 (latest tag found) | Tag verified, not otherwise tested |
+| CAPV | v1.17.0 | Tag verified |
+| CAPA | v2.13.1 | Tag verified |
+| image-builder | v0.1.55 | Tag verified |
+| Flatcar-in-CAPI provider support | AWS, vSphere, Azure, Kubevirt, OpenStack, Proxmox, Akamai/Linode | Verified from the Flatcar Kubernetes docs page |
+
+## Other components
+
+| Item | Pin | Status |
+|---|---|---|
+| flatcar-linux-update-operator (FLUO) | v0.10.0 | Tag verified |
+| Nebraska | 4.0.0 | Tag verified |
+| kured | 1.23.0 | Tag verified |
+| sysext-bakery | `445ccc9` (2026-09-08) | Verified |
+| Flatcar Kubernetes compat matrix | Flatcar Stable is tested with Kubernetes 1.35, 1.36, 1.37 | Verified, [`orchestrate/kubernetes/getting-started-with-kubernetes.md`][fw-k8s] |
+
+## Source snapshot commits used while writing
+
+| Repo | Commit |
+|---|---|
+| flatcar/flatcar-website (docs and release data) | `415d66a7b79efa4374b927a4cd6d7b5bd1bfeb9c` |
+| flatcar/scripts | `2189f1e166e28c06cdcd1b26fea47f05da78c139` |
+| flatcar/init | `0765e955aca24034d66b9389e0d538e4c3ee543c` |
+| flatcar/update_engine | `f23d6ea848ffe2c8721bc49d2a9f77f4de038ad2` |
+| flatcar/locksmith | `6ea5e7c73bb83cf6c013ff191cc0646e08cb3240` |
+| flatcar/bootengine | `7727ec78da72e700e8fa1ce2144cb2476448d186` |
+| flatcar/sysext-bakery | `445ccc99020d18b07c58c1217b0fcde43fe590c7` |
+| flatcar/Flatcar | `42d9daa78c15f0c2d8f370bb7516de95cfb23819` |
+| flatcar/flatcar-linux-update-operator | `b3ac14453d8880adfdb839e36434dedc95b4fc01` |
+| flatcar/nebraska | `4c0f1759879206f80dbcf9943853cf4635429c1a` |
+| coreos/butane | `cb34e120e5267bfd5bdfa83fa8c2e44e06dedda2` |
+| coreos/ignition | `94173720290741546ffc2cc1a677eb0ab5d0cb84` |
+| rancher/rke2 | `9f211ec277dd48fd516290d5a3ba47925f0291ad` |
+| rancher/rke2-docs | `9780f57568e0e4a922403d2f0ce249cef503af2f` |
+| rancher/rke2-upgrade | `926cf75e2df17215ff65753116a1bfda67dad5ac` |
+| rancher/system-upgrade-controller | `96eced818739186f46a0ce1e343fe0aed6d499c7` |
+| kelseyhightower/kubernetes-the-hard-way | `52eb26dad1a3e9e8083a899bc854421eb4842a73` |
+
+[fw-data]: https://github.com/flatcar/flatcar-website/tree/415d66a7b79efa4374b927a4cd6d7b5bd1bfeb9c/data/releases/stable
+[fw-k8s]: https://github.com/flatcar/flatcar-website/blob/415d66a7b79efa4374b927a4cd6d7b5bd1bfeb9c/content/docs/latest/orchestrate/kubernetes/getting-started-with-kubernetes.md
+[scripts-confext]: https://github.com/flatcar/scripts/blob/2189f1e166e28c06cdcd1b26fea47f05da78c139/changelog/changes/2025-12-12-default-systemd-confext.md
+[butane-specs]: https://github.com/coreos/butane/blob/cb34e120e5267bfd5bdfa83fa8c2e44e06dedda2/docs/specs.md
+[butane-translate]: https://github.com/coreos/butane/blob/cb34e120e5267bfd5bdfa83fa8c2e44e06dedda2/config/flatcar/v1_1/translate.go
+[ignition-specs]: https://github.com/coreos/ignition/blob/94173720290741546ffc2cc1a677eb0ab5d0cb84/docs/specs.md

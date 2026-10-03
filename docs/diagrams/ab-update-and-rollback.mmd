@@ -1,0 +1,18 @@
+%% A/B update and rollback. Facts: update_engine flatcar-postinst / flatcar-setgoodroot,
+%% manual-rollbacks doc (cgpt attributes), update-strategies doc (statuses).
+stateDiagram-v2
+    [*] --> RunningA: slot A priority=1 tries=0 successful=1
+    RunningA --> Checking: update-engine poll (about hourly)
+    Checking --> RunningA: no update (IDLE)
+    Checking --> Downloading: Omaha response with payload
+    Downloading --> Verifying: full /usr partition image written to slot B
+    Verifying --> Finalizing: signature checked against baked-in key
+    Finalizing --> NeedReboot: postinst: OEM hook, extension payloads, then B priority=2 tries=1 successful=0
+    NeedReboot --> Rebooting: reboot manager decides (locksmithd, FLUO, kured, you)
+    Rebooting --> TryB: GRUB gptprio.next picks B, tries drops to 0
+    TryB --> GoodB: update-engine stays up (docs say 1-2 minutes), flatcar-setgoodroot sets successful=1
+    GoodB --> [*]: B is now the running slot, A is the rollback target
+    TryB --> FallbackA: B never marks success (kernel panic, critical unit dependency fails, reboot loop)
+    FallbackA --> RunningA: GRUB fallback to previous entry; B stays successful=0 tries=0
+    GoodB --> ManualRollback: cgpt prioritize passive slot, reboot
+    ManualRollback --> RunningA

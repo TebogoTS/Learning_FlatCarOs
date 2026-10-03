@@ -1,0 +1,12 @@
+# downloaded, pinned tooling and generated artefacts
+tools/bin/
+build/
+.cache/
+*.ign
+!labs/**/expected/*.ign
+
+# lab runtime state (images, overlays, keys, generated PKI)
+labs/**/state/
+labs/**/.state/
+labs/**/pki/
+labs/**/secrets/
