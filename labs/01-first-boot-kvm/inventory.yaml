@@ -1,0 +1,9 @@
+cluster:
+  name: lab01
+  domain: lab.test
+vars:
+  ssh_port: "2222"
+nodes:
+  - name: lab01
+    role: node
+    mac: "52:54:00:77:01:01"

@@ -1,0 +1,42 @@
+%% Update + reboot coordination in a Kubernetes cluster, two variants.
+%% Sources: update_engine flatcar-postinst (/run/reboot-required), FLUO README + pkg/constants,
+%% kured flags (cmd/kured/main.go), Nebraska enforceRolloutPolicy, update-strategies doc.
+sequenceDiagram
+    autonumber
+    participant N as Nebraska (private update server)
+    participant UE as update_engine (node)
+    participant A as reboot signal on node
+    participant R as reboot manager in cluster
+    participant K as kube-apiserver
+    participant W as workloads (PDBs)
+
+    UE->>N: Omaha check-in (appid, version, track=GROUP)
+    N->>N: enforceRolloutPolicy: updates enabled? office hours? max per period? in progress? safe mode?
+    alt policy allows
+        N-->>UE: update granted + payload locations
+        UE->>UE: write full /usr image to passive slot, verify signature, postinst
+        UE->>A: UPDATE_STATUS_UPDATED_NEED_REBOOT, touch /run/reboot-required
+    else policy blocks
+        N-->>UE: no update (instance on hold)
+    end
+
+    alt FLUO (locksmithd masked, update-engine enabled)
+        A->>R: update-agent sees D-Bus status, sets annotation reboot-needed=true
+        R->>R: update-operator picks ONE node, checks reboot window and before-reboot annotations
+        R->>K: annotation reboot-ok=true
+        R->>K: agent cordons and drains (evict, honours PDBs; optional force-drain)
+        K->>W: evict pods respecting PodDisruptionBudgets
+        R->>A: agent reboots node
+    else kured (locksmithd masked)
+        A->>R: kured polls sentinel /var/run/reboot-required every period
+        R->>K: acquire cluster lock (DaemonSet annotation), concurrency default 1
+        R->>R: check window (days, start/end, time zone) and Prometheus alerts / blocking pods
+        R->>K: cordon + drain
+        K->>W: evict pods respecting PodDisruptionBudgets
+        R->>A: systemctl reboot
+    end
+
+    A->>UE: node reboots into passive slot (tries=1 -> 0)
+    UE->>UE: stays up 1-2 min, flatcar-setgoodroot marks slot successful
+    R->>K: after-reboot checks, uncordon, release lock
+    UE->>N: report update complete

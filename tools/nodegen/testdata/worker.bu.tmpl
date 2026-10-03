@@ -1,0 +1,16 @@
+variant: flatcar
+version: 1.1.0
+storage:
+  files:
+    - path: /etc/hostname
+      contents:
+        inline: {{ .FQDN }}
+    - path: /etc/cluster
+      contents:
+        inline: |
+          flavor={{ .Vars.flavor }}
+          pod_cidr={{ .Vars.pod_cidr }}
+          servers={{ range $i, $n := .NodesByRole "server" }}{{ if $i }},{{ end }}{{ $n.IP }}{{ end }}
+    - path: /etc/payload.sha256
+      contents:
+        inline: {{ sha256file "payload.txt" }}

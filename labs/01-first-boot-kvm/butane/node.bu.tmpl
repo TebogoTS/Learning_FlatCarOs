@@ -1,0 +1,62 @@
+# Lab 01: first boot of Flatcar under QEMU.
+# Demonstrates: a user with an SSH key, files written by Ignition, a systemd unit, and
+# updates deliberately frozen so the node does not reboot while you explore.
+variant: flatcar
+version: 1.1.0
+
+passwd:
+  users:
+    # "core" already exists in the image; Ignition adds the key to it.
+    - name: core
+      ssh_authorized_keys:
+        - {{ required "ssh_pubkey (set by the Makefile)" .Vars.ssh_pubkey }}
+
+storage:
+  files:
+    - path: /etc/hostname
+      mode: 0644
+      contents:
+        inline: {{ .Node.Name }}
+
+    # Proof that Ignition ran: a file in the writable /etc that records how it got there.
+    - path: /etc/lab/provisioned-by-ignition
+      mode: 0644
+      contents:
+        inline: |
+          This file was written by Ignition in the initrd on first boot.
+          Node: {{ .FQDN }}
+
+    # Freeze OS updates for this lab. Lab 02 turns them back on.
+    # SERVER=disabled stops update_engine downloading while still letting it mark the
+    # booted slot successful (documented in update-conf.md), which is why it is better
+    # than masking update-engine.
+    - path: /etc/flatcar/update.conf
+      mode: 0644
+      overwrite: true
+      contents:
+        inline: |
+          SERVER=disabled
+
+systemd:
+  units:
+    # No reboot manager is needed while updates are frozen.
+    - name: locksmithd.service
+      mask: true
+
+    # A first-boot unit. It records the OS version and which USR slot it booted from,
+    # so you can compare against what you see interactively.
+    - name: lab-hello.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Lab 01: record OS version and USR slot
+        After=local-fs.target
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        StateDirectory=lab
+        ExecStart=/bin/sh -c '. /etc/os-release; echo "version=$VERSION_ID usr=$(rootdev -s /usr) boot=$(date -u +%%FT%%TZ)" > /var/lib/lab/hello'
+
+        [Install]
+        WantedBy=multi-user.target

@@ -88,8 +88,11 @@ Config produced warnings and --strict was specified
 
 (That output is from Butane v0.29.0 run during authoring.) Every lab target in this repository transpiles with `--strict`,
 and `tools/butanecheck` adds policy checks that Butane does not make: that the spec variant and version match the pins,
-that every remote `http(s)` source carries a verification hash, that an enabled unit has an `[Install]` section, that no
-private-key material is embedded unless explicitly allowed, and that the transpiled JSON stays under a size budget.
+that every remote `http(s)` source carries a verification hash, that no private-key material is embedded unless explicitly
+allowed (and then only in files that are not group or world readable), and that the transpiled JSON stays under a size budget.
+(An earlier draft of the tool also checked that enabled units have an `[Install]` section; Butane already reports that case as a
+warning, `unit "X" is enabled, but has no install section so enable does nothing`, which `--strict` turns into a failure, so the
+duplicate check was removed.)
 
 A small Butane config and its real transpiled output (Butane v0.29.0, `--pretty --strict`):
 
@@ -203,9 +206,12 @@ which Ignition fetches with the instance's IAM role (or anonymously if there is 
 sit behind IAM rather than in the metadata service ([operator notes][operator-notes]). Flatcar's AMIs are published per
 region and, importantly for pinned autoscaling groups, "AMIs older than 9 months will be un-published" ([AWS][aws-doc]).
 
-> ⚠️ Verify: the EC2 user data size limit (documented by AWS as 16 KB before base64 encoding) is not stated in the
-> Flatcar or Ignition sources I read. Check the current AWS limit, and whether the AWS provider accepts gzip-compressed
-> user data; the generic gunzip helper exists in the provider utilities but I did not confirm AWS uses it.
+> ⚠️ Verify: the EC2 user data size limit. The Flatcar and Ignition sources I read do not state it, and the Cluster API
+> AWS provider's Ignition document says "EC2 instance user data storage is also limited to 64 KB" and for that reason
+> stores Ignition user data in S3 by default ([CAPA Ignition support][capa-ignition]). My own recollection of AWS's
+> documented limit is smaller than that. Check the current AWS documentation, and whether the AWS provider accepts
+> gzip-compressed user data; a generic gunzip helper exists in Ignition's provider utilities but I did not confirm AWS
+> uses it.
 
 ### Dynamic data
 
@@ -261,4 +267,5 @@ key such as `souce` ([boot process][boot-process]). To re-run provisioning on an
 [ipxe-doc]: https://github.com/flatcar/flatcar-website/blob/415d66a7b79efa4374b927a4cd6d7b5bd1bfeb9c/content/docs/latest/deploy/bare-metal/booting-with-ipxe.md
 [qemu-template]: https://github.com/flatcar/scripts/blob/2189f1e166e28c06cdcd1b26fea47f05da78c139/build_library/qemu_template.sh
 [ignition-aws]: https://github.com/coreos/ignition/blob/94173720290741546ffc2cc1a677eb0ab5d0cb84/internal/providers/aws/aws.go
+[capa-ignition]: https://github.com/kubernetes-sigs/cluster-api-provider-aws/blob/0efa4cc1e6a008c995bac03c09209508877783d6/docs/book/src/topics/ignition-support.md
 [init-units]: https://github.com/flatcar/init/tree/0765e955aca24034d66b9389e0d538e4c3ee543c/systemd/system

@@ -1,0 +1,25 @@
+%% RKE2-on-Flatcar node lifecycle. Facts: rke2 install.sh (artifact path, /opt/rke2 fallback, unit move),
+%% rke2-upgrade upgrade.sh (binary replace + SIGTERM), Flatcar update flow (docs 04/07), SUC plan fields.
+stateDiagram-v2
+    [*] --> Provisioned: VM created from Flatcar image + Ignition (QEMU fw_cfg / vSphere guestinfo / AWS user data)
+    Provisioned --> IgnitionApplied: initrd applies config: users, /etc/rancher/rke2/config.yaml, units, pinned artifacts
+    IgnitionApplied --> Installing: first-boot unit runs installer from local artifacts\n(INSTALL_RKE2_ARTIFACT_PATH, INSTALL_RKE2_TAR_PREFIX=/opt/rke2)
+    Installing --> Starting: units moved to /etc/systemd/system, enable rke2-server or rke2-agent
+    Starting --> Joined: server: embedded etcd + control plane; agent: join server:9345 with token
+    Joined --> Steady: kubelet Ready, CNI up (Canal default)
+
+    state Steady {
+        [*] --> Running
+        Running --> OSStaged: update_engine stages new /usr in passive slot, touches /run/reboot-required
+        OSStaged --> Draining: kured or FLUO takes lock, window open, PDBs respected
+        Draining --> Rebooting: reboot into new slot
+        Rebooting --> Confirming: node boots, rke2 unit starts from /opt/rke2, update-engine marks slot successful
+        Confirming --> Running: uncordon, release lock
+        Running --> RKE2Upgrading: SUC Plan matches node (server plan first, concurrency 1)
+        RKE2Upgrading --> Running: rke2-upgrade replaces /opt/rke2/bin/rke2, SIGTERMs rke2, systemd restarts it
+    }
+
+    Steady --> Replaced: preferred remediation: delete node, create new from image + Ignition
+    Replaced --> [*]
+    Steady --> RolledBack: OS slot fails to boot, GRUB falls back; RKE2 files on ROOT unchanged
+    RolledBack --> Steady
