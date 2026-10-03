@@ -1,0 +1,80 @@
+{{/* Fragments shared by the server and worker templates. Pulled in with `nodegen -partial`.
+     Each block is already indented for its place under `storage.files`. */}}
+
+{{ define "common-files" }}
+    - path: /etc/hostname
+      mode: 0644
+      contents:
+        inline: {{ .Node.Name }}
+
+    # KTHW chapter 03 edits /etc/hosts with sed over SSH. Here it is written once, at first boot.
+    # The API server reaches kubelets by hostname, so every node must resolve every other node.
+    - path: /etc/hosts
+      mode: 0644
+      overwrite: true
+      contents:
+        inline: |
+          127.0.0.1 localhost
+          ::1 localhost
+{{- range .Nodes }}
+          {{ .IP }} {{ .Name }} {{ .Name }}.{{ $.Cluster.Domain }}
+{{- end }}
+          {{ .Vars.api_ip }} server.kubernetes.local api-server.kubernetes.local
+
+    # The lab freezes OS updates so a reboot cannot interrupt the walkthrough. Labs 02 and 05
+    # show the update path.
+    - path: /etc/flatcar/update.conf
+      mode: 0644
+      overwrite: true
+      contents:
+        inline: |
+          SERVER=disabled
+
+    # The initrd configures every NIC with DHCP (the lab bridge serves a fixed lease per MAC), so
+    # Ignition can download artifacts. This unit takes over after switch-root and adds the pod
+    # network routes that KTHW chapter 11 adds with `ip route add`: for every other node's pod
+    # subnet, send traffic via that node.
+    - path: /etc/systemd/network/10-lab.network
+      mode: 0644
+      contents:
+        inline: |
+          [Match]
+          MACAddress={{ .Node.MAC }}
+
+          [Network]
+          DHCP=yes
+{{- range .Nodes }}{{ $n := . }}{{ if ne .Name $.Node.Name }}{{ with index .Vars "pod_subnet" }}
+
+          [Route]
+          Destination={{ . }}
+          Gateway={{ $n.IP }}
+{{- end }}{{ end }}{{ end }}
+
+    # Kernel settings KTHW chapter 09 applies by hand (modprobe br-netfilter, sysctl -w).
+    - path: /etc/modules-load.d/kthw.conf
+      mode: 0644
+      contents:
+        inline: |
+          br_netfilter
+    - path: /etc/sysctl.d/90-kthw.conf
+      mode: 0644
+      contents:
+        inline: |
+          net.ipv4.ip_forward = 1
+          net.bridge.bridge-nf-call-iptables = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+
+    # A crictl config so the built-in crictl talks to the built-in containerd.
+    - path: /etc/crictl.yaml
+      mode: 0644
+      contents:
+        inline: |
+          runtime-endpoint: unix:///run/containerd/containerd.sock
+          image-endpoint: unix:///run/containerd/containerd.sock
+
+    - path: /var/lib/kubernetes/ca.crt
+      mode: 0644
+      contents:
+        inline: |
+{{ file "pki/ca.crt" | indent 10 }}
+{{ end }}

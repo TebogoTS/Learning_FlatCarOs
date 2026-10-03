@@ -1,0 +1,28 @@
+# Lab 04: Kubernetes the Hard Way on Flatcar. The host running these scripts is the "jumpbox".
+cluster:
+  name: kthw
+  domain: lab.test
+vars:
+  # Where the VMs fetch binaries from: the jumpbox, on the lab bridge (scripts/cluster.sh serve).
+  artifact_url: http://10.77.0.1:8080
+  api_ip: 10.77.0.10
+  api_port: "6443"
+  pod_cidr: 10.200.0.0/16
+  service_cidr: 10.32.0.0/24
+nodes:
+  - name: server
+    role: server
+    ip: 10.77.0.10
+    mac: "52:54:00:77:04:10"
+  - name: node-0
+    role: worker
+    ip: 10.77.0.20
+    mac: "52:54:00:77:04:20"
+    vars:
+      pod_subnet: 10.200.0.0/24
+  - name: node-1
+    role: worker
+    ip: 10.77.0.21
+    mac: "52:54:00:77:04:21"
+    vars:
+      pod_subnet: 10.200.1.0/24

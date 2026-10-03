@@ -1,0 +1,196 @@
+# Lab 04, worker node: kubelet, kube-proxy and the CNI plugins, as in KTHW chapter 09.
+#
+# Flatcar already provides containerd (the containerd-flatcar sysext), runc, crictl and iptables, so
+# KTHW's downloads of those are skipped: only kubelet, kube-proxy and three CNI plugins are fetched.
+# The shipped containerd config already sets SystemdCgroup = true, so KTHW's containerd-config.toml
+# is not needed either (doc 12 explains how to confirm this on a running node).
+variant: flatcar
+version: 1.1.0
+
+passwd:
+  users:
+    - name: core
+      ssh_authorized_keys:
+        - {{ required "ssh_pubkey (set by cluster.sh)" .Vars.ssh_pubkey }}
+
+storage:
+  # Docker is not used by this lab. Its extension would also change iptables FORWARD policy.
+  links:
+    - path: /etc/extensions/docker-flatcar.raw
+      target: /dev/null
+      overwrite: true
+  files:
+{{ template "common-files" . }}
+
+    # --- binaries ---
+    - path: /opt/bin/kubelet
+      mode: 0755
+      contents:
+        source: {{ .Vars.artifact_url }}/kubelet
+        verification:
+          hash: sha256-{{ sha256file "artifacts/kubelet" }}
+    - path: /opt/bin/kube-proxy
+      mode: 0755
+      contents:
+        source: {{ .Vars.artifact_url }}/kube-proxy
+        verification:
+          hash: sha256-{{ sha256file "artifacts/kube-proxy" }}
+    - path: /opt/cni/bin/bridge
+      mode: 0755
+      contents:
+        source: {{ .Vars.artifact_url }}/bridge
+        verification:
+          hash: sha256-{{ sha256file "artifacts/bridge" }}
+    - path: /opt/cni/bin/host-local
+      mode: 0755
+      contents:
+        source: {{ .Vars.artifact_url }}/host-local
+        verification:
+          hash: sha256-{{ sha256file "artifacts/host-local" }}
+    - path: /opt/cni/bin/loopback
+      mode: 0755
+      contents:
+        source: {{ .Vars.artifact_url }}/loopback
+        verification:
+          hash: sha256-{{ sha256file "artifacts/loopback" }}
+
+    # --- credentials ---
+    - path: /var/lib/kubelet/ca.crt
+      mode: 0644
+      contents:
+        inline: |
+{{ file "pki/ca.crt" | indent 10 }}
+    - path: /var/lib/kubelet/kubelet.crt
+      mode: 0644
+      contents:
+        inline: |
+{{ file (printf "pki/%s.crt" .Node.Name) | indent 10 }}
+    - path: /var/lib/kubelet/kubelet.key
+      mode: 0600
+      contents:
+        inline: |
+{{ file (printf "pki/%s.key" .Node.Name) | indent 10 }}
+    - path: /var/lib/kubelet/kubeconfig
+      mode: 0600
+      contents:
+        inline: |
+{{ file (printf "kubeconfigs/%s.kubeconfig" .Node.Name) | indent 10 }}
+    - path: /var/lib/kube-proxy/kubeconfig
+      mode: 0600
+      contents:
+        inline: |
+{{ file "kubeconfigs/kube-proxy.kubeconfig" | indent 10 }}
+
+    # --- component configuration ---
+    - path: /var/lib/kubelet/kubelet-config.yaml
+      mode: 0644
+      contents:
+        inline: |
+          kind: KubeletConfiguration
+          apiVersion: kubelet.config.k8s.io/v1beta1
+          address: "0.0.0.0"
+          authentication:
+            anonymous:
+              enabled: false
+            webhook:
+              enabled: true
+            x509:
+              clientCAFile: "/var/lib/kubelet/ca.crt"
+          authorization:
+            mode: Webhook
+          cgroupDriver: systemd
+          containerRuntimeEndpoint: "unix:///run/containerd/containerd.sock"
+          enableServer: true
+          failSwapOn: false
+          maxPods: 16
+          memorySwap:
+            swapBehavior: NoSwap
+          port: 10250
+          # On Flatcar /etc/resolv.conf already points at systemd-resolved's non-stub file.
+          resolvConf: "/etc/resolv.conf"
+          registerNode: true
+          runtimeRequestTimeout: "15m"
+          tlsCertFile: "/var/lib/kubelet/kubelet.crt"
+          tlsPrivateKeyFile: "/var/lib/kubelet/kubelet.key"
+    - path: /var/lib/kube-proxy/kube-proxy-config.yaml
+      mode: 0644
+      contents:
+        inline: |
+          kind: KubeProxyConfiguration
+          apiVersion: kubeproxy.config.k8s.io/v1alpha1
+          clientConnection:
+            kubeconfig: "/var/lib/kube-proxy/kubeconfig"
+          mode: "iptables"
+          clusterCIDR: "{{ .Vars.pod_cidr }}"
+    # The per-node pod subnet is what makes the routes in /etc/systemd/network/10-lab.network work.
+    - path: /etc/cni/net.d/10-bridge.conf
+      mode: 0644
+      contents:
+        inline: |
+          {
+            "cniVersion": "1.0.0",
+            "name": "bridge",
+            "type": "bridge",
+            "bridge": "cni0",
+            "isGateway": true,
+            "ipMasq": true,
+            "ipam": {
+              "type": "host-local",
+              "ranges": [
+                [{"subnet": "{{ required "pod_subnet (node var)" .Vars.pod_subnet }}"}]
+              ],
+              "routes": [{"dst": "0.0.0.0/0"}]
+            }
+          }
+    - path: /etc/cni/net.d/99-loopback.conf
+      mode: 0644
+      contents:
+        inline: |
+          {
+            "cniVersion": "1.1.0",
+            "name": "lo",
+            "type": "loopback"
+          }
+
+systemd:
+  units:
+    - name: locksmithd.service
+      mask: true
+
+    - name: kubelet.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Kubernetes Kubelet
+        Documentation=https://github.com/kubernetes/kubernetes
+        After=containerd.service
+        Requires=containerd.service
+
+        [Service]
+        ExecStart=/opt/bin/kubelet \
+          --config=/var/lib/kubelet/kubelet-config.yaml \
+          --kubeconfig=/var/lib/kubelet/kubeconfig \
+          --v=2
+        Restart=on-failure
+        RestartSec=5
+
+        [Install]
+        WantedBy=multi-user.target
+
+    - name: kube-proxy.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Kubernetes Kube Proxy
+        Documentation=https://github.com/kubernetes/kubernetes
+        After=network-online.target
+        Wants=network-online.target
+
+        [Service]
+        ExecStart=/opt/bin/kube-proxy \
+          --config=/var/lib/kube-proxy/kube-proxy-config.yaml
+        Restart=on-failure
+        RestartSec=5
+
+        [Install]
+        WantedBy=multi-user.target

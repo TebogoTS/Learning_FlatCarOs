@@ -50,6 +50,8 @@ type Renderer struct {
 	Overrides map[string]any
 	// Templates maps role to template path. The empty role is the default.
 	Templates map[string]string
+	// Partials are extra template files whose {{ define }} blocks are available to every template.
+	Partials []string
 }
 
 func mergeVars(layers ...map[string]any) map[string]any {
@@ -162,6 +164,17 @@ func (r *Renderer) RenderNode(n Node) ([]byte, error) {
 		Parse(string(src))
 	if err != nil {
 		return nil, fmt.Errorf("node %q: parse %s: %w", n.Name, tplPath, err)
+	}
+	// Partials only contribute {{ define "name" }} blocks that the main template pulls in
+	// with {{ template "name" . }}; their top-level text is never rendered.
+	for _, p := range r.Partials {
+		psrc, err := os.ReadFile(p)
+		if err != nil {
+			return nil, fmt.Errorf("node %q: %w", n.Name, err)
+		}
+		if _, err := t.New(filepath.Base(p)).Parse(string(psrc)); err != nil {
+			return nil, fmt.Errorf("node %q: parse partial %s: %w", n.Name, p, err)
+		}
 	}
 	data := Data{
 		Cluster: r.Inventory.Cluster,

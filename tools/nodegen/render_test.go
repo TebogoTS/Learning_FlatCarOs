@@ -247,3 +247,30 @@ func TestIndentHelper(t *testing.T) {
 		t.Fatalf("indent produced %q", got)
 	}
 }
+
+func TestPartialsProvideDefinesToMainTemplate(t *testing.T) {
+	dir := t.TempDir()
+	main := filepath.Join(dir, "main.tmpl")
+	part := filepath.Join(dir, "part.tmpl")
+	os.WriteFile(main, []byte(`host={{ .Node.Name }} {{ template "greet" . }}`), 0o600)
+	os.WriteFile(part, []byte(`IGNORED TOP LEVEL{{ define "greet" }}hello-{{ .Node.Role }}{{ end }}`), 0o600)
+	r := testRenderer(t)
+	r.Templates = map[string]string{"": main}
+	r.Partials = []string{part}
+	out, err := r.RenderNode(nodeByName(t, r, "node-0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(out), "host=node-0 hello-worker"; got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+	r.Partials = []string{filepath.Join(dir, "missing.tmpl")}
+	if _, err := r.RenderNode(nodeByName(t, r, "node-0")); err == nil {
+		t.Fatal("missing partial must fail")
+	}
+	// A template that calls an undefined partial must fail rather than render empty.
+	r.Partials = nil
+	if _, err := r.RenderNode(nodeByName(t, r, "node-0")); err == nil {
+		t.Fatal("undefined template call must fail")
+	}
+}

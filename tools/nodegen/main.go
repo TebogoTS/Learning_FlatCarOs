@@ -26,14 +26,28 @@ func run(args []string, stdout, stderr *os.File) int {
 		baseDir   = fs.String("base-dir", "", "directory the template file helpers may read from (default: the inventory's directory)")
 		filesDir  = fs.String("files-dir", "", "Butane --files-dir for local: resources (default: base-dir)")
 		only      = fs.String("only", "", "render only this node")
+		list      = fs.Bool("list", false, "print the inventory as tab-separated name, role, ip, mac and exit (for shell scripts)")
 		doTrans   = fs.Bool("transpile", false, "also write <node>.ign using strict Butane")
 		templates listFlag
+		partials  listFlag
 		vars      listFlag
 	)
 	fs.Var(&templates, "template", "template path, or role=path (repeatable); a bare path is the default for all roles")
+	fs.Var(&partials, "partial", "partial template file providing {{ define }} blocks to all templates (repeatable)")
 	fs.Var(&vars, "var", "variable override key=value (repeatable)")
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+	if *list && *invPath != "" {
+		inv, err := LoadInventory(*invPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "nodegen: %v\n", err)
+			return 1
+		}
+		for _, n := range inv.Nodes {
+			fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", n.Name, n.Role, n.IP, n.MAC)
+		}
+		return 0
 	}
 	if *invPath == "" || *outDir == "" || len(templates) == 0 {
 		fmt.Fprintln(stderr, "usage: nodegen -inventory inv.yaml -template [role=]tpl.bu.tmpl [-template ...] -out DIR [-var k=v] [-transpile] [-only NAME]")
@@ -71,7 +85,7 @@ func run(args []string, stdout, stderr *os.File) int {
 		fd = base
 	}
 
-	r := &Renderer{Inventory: inv, BaseDir: base, Overrides: over, Templates: tpls}
+	r := &Renderer{Inventory: inv, BaseDir: base, Overrides: over, Templates: tpls, Partials: partials}
 	outs, err := r.RenderAll(*only, *doTrans, fd)
 	if err != nil {
 		fmt.Fprintf(stderr, "nodegen: %v\n", err)

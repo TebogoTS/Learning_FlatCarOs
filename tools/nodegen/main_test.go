@@ -51,3 +51,27 @@ func TestRunUsageErrors(t *testing.T) {
 		t.Errorf("bad -var: exit %d, want 2", code)
 	}
 }
+
+func TestRunList(t *testing.T) {
+	so, _ := os.Create(filepath.Join(t.TempDir(), "so"))
+	se, _ := os.Create(filepath.Join(t.TempDir(), "se"))
+	defer so.Close()
+	defer se.Close()
+	if code := run([]string{"-inventory", "testdata/inventory.yaml", "-list"}, so, se); code != 0 {
+		b, _ := os.ReadFile(se.Name())
+		t.Fatalf("exit %d: %s", code, b)
+	}
+	b, _ := os.ReadFile(so.Name())
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("want 3 lines, got %q", b)
+	}
+	for _, l := range lines {
+		if len(strings.Split(l, "\t")) != 4 {
+			t.Errorf("line %q is not 4 tab-separated fields", l)
+		}
+	}
+	if !strings.HasPrefix(lines[0], "server\tserver\t") {
+		t.Errorf("first line %q", lines[0])
+	}
+}

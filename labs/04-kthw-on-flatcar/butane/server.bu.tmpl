@@ -1,0 +1,259 @@
+# Lab 04, control-plane node ("server"): etcd, kube-apiserver, kube-controller-manager and
+# kube-scheduler, as in KTHW chapters 07 and 08, plus the chapter-08 RBAC step as a oneshot unit.
+#
+# Binaries are downloaded by Ignition from the jumpbox with SHA-256 pins that nodegen computes from
+# the verified files. Keys are inlined, so the rendered config is a secret (mode 0600, never
+# committed). In production, bring keys in a different way (doc 12).
+variant: flatcar
+version: 1.1.0
+
+passwd:
+  users:
+    - name: core
+      ssh_authorized_keys:
+        - {{ required "ssh_pubkey (set by cluster.sh)" .Vars.ssh_pubkey }}
+
+storage:
+  files:
+{{ template "common-files" . }}
+
+    # --- binaries (KTHW chapter 02 put these on the jumpbox; here the node fetches them) ---
+    - path: /opt/bin/etcd
+      mode: 0755
+      contents:
+        source: {{ .Vars.artifact_url }}/etcd
+        verification:
+          hash: sha256-{{ sha256file "artifacts/etcd" }}
+    - path: /opt/bin/etcdctl
+      mode: 0755
+      contents:
+        source: {{ .Vars.artifact_url }}/etcdctl
+        verification:
+          hash: sha256-{{ sha256file "artifacts/etcdctl" }}
+    - path: /opt/bin/kube-apiserver
+      mode: 0755
+      contents:
+        source: {{ .Vars.artifact_url }}/kube-apiserver
+        verification:
+          hash: sha256-{{ sha256file "artifacts/kube-apiserver" }}
+    - path: /opt/bin/kube-controller-manager
+      mode: 0755
+      contents:
+        source: {{ .Vars.artifact_url }}/kube-controller-manager
+        verification:
+          hash: sha256-{{ sha256file "artifacts/kube-controller-manager" }}
+    - path: /opt/bin/kube-scheduler
+      mode: 0755
+      contents:
+        source: {{ .Vars.artifact_url }}/kube-scheduler
+        verification:
+          hash: sha256-{{ sha256file "artifacts/kube-scheduler" }}
+    - path: /opt/bin/kubectl
+      mode: 0755
+      contents:
+        source: {{ .Vars.artifact_url }}/kubectl
+        verification:
+          hash: sha256-{{ sha256file "artifacts/kubectl" }}
+
+    # --- credentials (KTHW chapters 04-06: the jumpbox scp-ed these to ~/ and moved them) ---
+    - path: /var/lib/kubernetes/ca.key
+      mode: 0600
+      contents:
+        inline: |
+{{ file "pki/ca.key" | indent 10 }}
+    - path: /var/lib/kubernetes/kube-api-server.crt
+      mode: 0644
+      contents:
+        inline: |
+{{ file "pki/kube-api-server.crt" | indent 10 }}
+    - path: /var/lib/kubernetes/kube-api-server.key
+      mode: 0600
+      contents:
+        inline: |
+{{ file "pki/kube-api-server.key" | indent 10 }}
+    - path: /var/lib/kubernetes/service-accounts.crt
+      mode: 0644
+      contents:
+        inline: |
+{{ file "pki/service-accounts.crt" | indent 10 }}
+    - path: /var/lib/kubernetes/service-accounts.key
+      mode: 0600
+      contents:
+        inline: |
+{{ file "pki/service-accounts.key" | indent 10 }}
+    - path: /var/lib/kubernetes/encryption-config.yaml
+      mode: 0600
+      contents:
+        inline: |
+{{ file "encryption-config.yaml" | indent 10 }}
+    - path: /var/lib/kubernetes/kube-controller-manager.kubeconfig
+      mode: 0600
+      contents:
+        inline: |
+{{ file "kubeconfigs/kube-controller-manager.kubeconfig" | indent 10 }}
+    - path: /var/lib/kubernetes/kube-scheduler.kubeconfig
+      mode: 0600
+      contents:
+        inline: |
+{{ file "kubeconfigs/kube-scheduler.kubeconfig" | indent 10 }}
+    - path: /var/lib/kubernetes/admin.kubeconfig
+      mode: 0600
+      contents:
+        inline: |
+{{ file "kubeconfigs/admin.kubeconfig" | indent 10 }}
+
+    # --- component configuration ---
+    - path: /etc/kubernetes/config/kube-scheduler.yaml
+      mode: 0644
+      contents:
+        inline: |
+          apiVersion: kubescheduler.config.k8s.io/v1
+          kind: KubeSchedulerConfiguration
+          clientConnection:
+            kubeconfig: "/var/lib/kubernetes/kube-scheduler.kubeconfig"
+          leaderElection:
+            leaderElect: true
+    - path: /etc/kubernetes/config/kube-apiserver-to-kubelet.yaml
+      mode: 0644
+      contents:
+        inline: |
+{{ file "config/kube-apiserver-to-kubelet.yaml" | indent 10 }}
+
+systemd:
+  units:
+    # Not needed while updates are frozen, and a reboot manager must not act mid-lab.
+    - name: locksmithd.service
+      mask: true
+
+    - name: etcd.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=etcd
+        Documentation=https://github.com/etcd-io/etcd
+
+        [Service]
+        Type=notify
+        ExecStart=/opt/bin/etcd \
+          --name controller \
+          --initial-advertise-peer-urls http://127.0.0.1:2380 \
+          --listen-peer-urls http://127.0.0.1:2380 \
+          --listen-client-urls http://127.0.0.1:2379 \
+          --advertise-client-urls http://127.0.0.1:2379 \
+          --initial-cluster-token etcd-cluster-0 \
+          --initial-cluster controller=http://127.0.0.1:2380 \
+          --initial-cluster-state new \
+          --data-dir=/var/lib/etcd
+        Restart=on-failure
+        RestartSec=5
+
+        [Install]
+        WantedBy=multi-user.target
+
+    - name: kube-apiserver.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Kubernetes API Server
+        Documentation=https://github.com/kubernetes/kubernetes
+        After=etcd.service
+        Wants=etcd.service
+
+        [Service]
+        ExecStart=/opt/bin/kube-apiserver \
+          --advertise-address={{ .Node.IP }} \
+          --allow-privileged=true \
+          --audit-log-maxage=30 \
+          --audit-log-maxbackup=3 \
+          --audit-log-maxsize=100 \
+          --audit-log-path=/var/log/audit.log \
+          --authorization-mode=Node,RBAC \
+          --bind-address=0.0.0.0 \
+          --client-ca-file=/var/lib/kubernetes/ca.crt \
+          --enable-admission-plugins=NamespaceLifecycle,NodeRestriction,LimitRanger,ServiceAccount,DefaultStorageClass,ResourceQuota \
+          --etcd-servers=http://127.0.0.1:2379 \
+          --event-ttl=1h \
+          --encryption-provider-config=/var/lib/kubernetes/encryption-config.yaml \
+          --kubelet-certificate-authority=/var/lib/kubernetes/ca.crt \
+          --kubelet-client-certificate=/var/lib/kubernetes/kube-api-server.crt \
+          --kubelet-client-key=/var/lib/kubernetes/kube-api-server.key \
+          --service-account-key-file=/var/lib/kubernetes/service-accounts.crt \
+          --service-account-signing-key-file=/var/lib/kubernetes/service-accounts.key \
+          --service-account-issuer=https://server.kubernetes.local:{{ .Vars.api_port }} \
+          --service-cluster-ip-range={{ .Vars.service_cidr }} \
+          --service-node-port-range=30000-32767 \
+          --tls-cert-file=/var/lib/kubernetes/kube-api-server.crt \
+          --tls-private-key-file=/var/lib/kubernetes/kube-api-server.key \
+          --v=2
+        Restart=on-failure
+        RestartSec=5
+
+        [Install]
+        WantedBy=multi-user.target
+
+    - name: kube-controller-manager.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Kubernetes Controller Manager
+        Documentation=https://github.com/kubernetes/kubernetes
+        After=kube-apiserver.service
+
+        [Service]
+        ExecStart=/opt/bin/kube-controller-manager \
+          --bind-address=0.0.0.0 \
+          --cluster-cidr={{ .Vars.pod_cidr }} \
+          --cluster-name=kubernetes \
+          --cluster-signing-cert-file=/var/lib/kubernetes/ca.crt \
+          --cluster-signing-key-file=/var/lib/kubernetes/ca.key \
+          --kubeconfig=/var/lib/kubernetes/kube-controller-manager.kubeconfig \
+          --root-ca-file=/var/lib/kubernetes/ca.crt \
+          --service-account-private-key-file=/var/lib/kubernetes/service-accounts.key \
+          --service-cluster-ip-range={{ .Vars.service_cidr }} \
+          --use-service-account-credentials=true \
+          --v=2
+        Restart=on-failure
+        RestartSec=5
+
+        [Install]
+        WantedBy=multi-user.target
+
+    - name: kube-scheduler.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Kubernetes Scheduler
+        Documentation=https://github.com/kubernetes/kubernetes
+        After=kube-apiserver.service
+
+        [Service]
+        ExecStart=/opt/bin/kube-scheduler \
+          --config=/etc/kubernetes/config/kube-scheduler.yaml \
+          --v=2
+        Restart=on-failure
+        RestartSec=5
+
+        [Install]
+        WantedBy=multi-user.target
+
+    # KTHW chapter 08 ends with `kubectl apply -f kube-apiserver-to-kubelet.yaml` from the
+    # jumpbox. As a unit it needs no human: it waits until the API answers, applies the RBAC
+    # that lets the API server call kubelets (logs, exec), then does not run again.
+    - name: kthw-bootstrap-rbac.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Apply the API-server-to-kubelet RBAC (KTHW chapter 08)
+        After=kube-apiserver.service
+        Wants=kube-apiserver.service
+        ConditionPathExists=!/var/lib/kubernetes/.rbac-applied
+
+        [Service]
+        Type=oneshot
+        TimeoutStartSec=600
+        ExecStart=/bin/sh -c 'until /opt/bin/kubectl --kubeconfig /var/lib/kubernetes/admin.kubeconfig get --raw /readyz >/dev/null 2>&1; do sleep 3; done'
+        ExecStart=/opt/bin/kubectl --kubeconfig /var/lib/kubernetes/admin.kubeconfig apply -f /etc/kubernetes/config/kube-apiserver-to-kubelet.yaml
+        ExecStart=/usr/bin/touch /var/lib/kubernetes/.rbac-applied
+
+        [Install]
+        WantedBy=multi-user.target
