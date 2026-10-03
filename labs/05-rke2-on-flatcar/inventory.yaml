@@ -1,0 +1,20 @@
+# Lab 05: one RKE2 server and two agents on Flatcar. Artifact versions and hashes come from
+# ../../versions.env and artifacts.env; the join token is generated per lab run (scripts/lab05.sh).
+cluster:
+  name: rke2lab
+  domain: lab.test
+vars:
+  server_ip: 10.77.0.30
+nodes:
+  - name: rke2-server
+    role: server
+    ip: 10.77.0.30
+    mac: "52:54:00:77:05:30"
+  - name: rke2-agent-0
+    role: agent
+    ip: 10.77.0.31
+    mac: "52:54:00:77:05:31"
+  - name: rke2-agent-1
+    role: agent
+    ip: 10.77.0.32
+    mac: "52:54:00:77:05:32"

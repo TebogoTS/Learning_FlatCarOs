@@ -1,0 +1,28 @@
+# Lab 05, RKE2 agent on Flatcar.
+variant: flatcar
+version: 1.1.0
+
+passwd:
+  users:
+    - name: core
+      ssh_authorized_keys:
+        - {{ required "ssh_pubkey (set by lab05.sh)" .Vars.ssh_pubkey }}
+
+storage:
+  links:
+{{ template "common-links" . }}
+  files:
+{{ template "common-files" . }}
+    - path: /etc/rancher/rke2/config.yaml
+      mode: 0600
+      contents:
+        inline: |
+          server: https://{{ .Vars.server_ip }}:9345
+          token: {{ required "token (set by lab05.sh)" .Vars.token }}
+          node-name: {{ .Node.Name }}
+
+systemd:
+  units:
+    - name: locksmithd.service
+      mask: true
+{{ template "installer-unit" . }}

@@ -1,0 +1,71 @@
+# kured DaemonSet for lab 05, derived from kubereboot/kured kured-ds.yaml at tag 1.23.0 (Apache-2.0).
+# The RBAC objects come unchanged from the same tag (pinned by hash in artifacts.env).
+# Changes from upstream:
+#   * image is 1.23.0 (the in-tree manifest at that tag still names 1.22.1);
+#   * --period=1m so the lab does not wait an hour between checks;
+#   * --concurrency=1 stated explicitly: never more than one node rebooting at once;
+#   * --blocking-pod-selector holds every reboot while a system-upgrade-controller job pod is
+#     running, so an RKE2 upgrade and an OS reboot never overlap on a node or across the cluster.
+# Flatcar's update_engine creates /run/reboot-required when an update is staged (doc 07); the sentinel
+# directory is mounted from the host's /var/run (a symlink to /run on Flatcar).
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kured
+  namespace: kube-system
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kured
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      name: kured
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        name: kured
+    spec:
+      serviceAccountName: kured
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/master
+          effect: NoSchedule
+      hostPID: true
+      restartPolicy: Always
+      volumes:
+        - name: sentinel
+          hostPath:
+            path: /var/run
+            type: Directory
+      containers:
+        - name: kured
+          image: ghcr.io/kubereboot/kured:1.23.0
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+            readOnlyRootFilesystem: true
+          ports:
+            - containerPort: 8080
+              name: metrics
+          env:
+            - name: KURED_NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - mountPath: /sentinel
+              name: sentinel
+              readOnly: true
+          command:
+            - /usr/bin/kured
+            - --reboot-sentinel=/sentinel/reboot-required
+            - --period=1m
+            - --concurrency=1
+            - --blocking-pod-selector=upgrade.cattle.io/controller=system-upgrade-controller

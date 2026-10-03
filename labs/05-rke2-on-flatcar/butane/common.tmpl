@@ -1,0 +1,84 @@
+{{/* Fragments shared by the server and agent templates (nodegen -partial). */}}
+
+{{ define "common-files" }}
+    - path: /etc/hostname
+      mode: 0644
+      contents:
+        inline: {{ .Node.Name }}
+
+    # Updates start frozen so the lab controls when the OS changes (scripts/lab05.sh os-update).
+    # SERVER=disabled still lets update_engine mark the booted slot good (doc 07).
+    - path: /etc/flatcar/update.conf
+      mode: 0644
+      overwrite: true
+      contents:
+        inline: |
+          SERVER=disabled
+
+    # RKE2 docs: raise inotify limits on nodes that run many pods.
+    - path: /etc/sysctl.d/99-inotify.conf
+      mode: 0644
+      contents:
+        inline: |
+          fs.inotify.max_user_instances = 8192
+          fs.inotify.max_user_watches = 524288
+
+    # --- pinned artifacts, fetched by Ignition in the initrd and verified before the system boots ---
+    # install.sh is fetched from the release tag, not from get.rke2.io, so the version is a function
+    # of this config. install.sh then re-verifies the tarball against sha256sum-amd64.txt, which is
+    # itself pinned here.
+    - path: /opt/rke2-artifacts/install.sh
+      mode: 0755
+      contents:
+        source: https://raw.githubusercontent.com/rancher/rke2/{{ .Vars.rke2_tag_url }}/install.sh
+        verification:
+          hash: sha256-{{ .Vars.install_sh_sha256 }}
+    - path: /opt/rke2-artifacts/rke2.linux-amd64.tar.gz
+      mode: 0644
+      contents:
+        source: https://github.com/rancher/rke2/releases/download/{{ .Vars.rke2_tag_url }}/rke2.linux-amd64.tar.gz
+        verification:
+          hash: sha256-{{ .Vars.tarball_sha256 }}
+    - path: /opt/rke2-artifacts/sha256sum-amd64.txt
+      mode: 0644
+      contents:
+        source: https://github.com/rancher/rke2/releases/download/{{ .Vars.rke2_tag_url }}/sha256sum-amd64.txt
+        verification:
+          hash: sha256-{{ .Vars.sums_sha256 }}
+{{ end }}
+
+{{ define "common-links" }}
+    # RKE2 brings its own containerd; do not run Flatcar's alongside it (doc 06, doc 10).
+    - path: /etc/extensions/docker-flatcar.raw
+      target: /dev/null
+      overwrite: true
+    - path: /etc/extensions/containerd-flatcar.raw
+      target: /dev/null
+      overwrite: true
+{{ end }}
+
+{{/* The installer unit. $type is "server" or "agent". */}}
+{{ define "installer-unit" }}
+    - name: rke2-install.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Install RKE2 from pinned artifacts
+        ConditionPathExists=!/opt/rke2/bin/rke2
+        Wants=network-online.target
+        After=network-online.target
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        Environment=INSTALL_RKE2_ARTIFACT_PATH=/opt/rke2-artifacts
+        Environment=INSTALL_RKE2_TAR_PREFIX=/opt/rke2
+        Environment=INSTALL_RKE2_METHOD=tar
+        Environment=INSTALL_RKE2_TYPE={{ .Node.Role }}
+        Environment=INSTALL_RKE2_SKIP_FAPOLICY=true
+        ExecStart=/usr/bin/sh /opt/rke2-artifacts/install.sh
+        ExecStartPost=/usr/bin/systemctl enable --now --no-block rke2-{{ .Node.Role }}.service
+
+        [Install]
+        WantedBy=multi-user.target
+{{ end }}

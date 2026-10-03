@@ -1,0 +1,33 @@
+# Lab 05, RKE2 server on Flatcar (Option A of doc 10: tarball under /opt/rke2, installed by a unit).
+variant: flatcar
+version: 1.1.0
+
+passwd:
+  users:
+    - name: core
+      ssh_authorized_keys:
+        - {{ required "ssh_pubkey (set by lab05.sh)" .Vars.ssh_pubkey }}
+
+storage:
+  links:
+{{ template "common-links" . }}
+  files:
+{{ template "common-files" . }}
+    # Pre-shared token, so agents can be created without first reading it from the server. It is in
+    # the Ignition config, which anything on the node can read: use a short-lived token or a secret
+    # store in production (doc 10).
+    - path: /etc/rancher/rke2/config.yaml
+      mode: 0600
+      contents:
+        inline: |
+          token: {{ required "token (set by lab05.sh)" .Vars.token }}
+          node-name: {{ .Node.Name }}
+          tls-san:
+            - {{ .Node.IP }}
+
+systemd:
+  units:
+    # kured (installed by `lab05.sh addons`) coordinates reboots, so locksmith must not.
+    - name: locksmithd.service
+      mask: true
+{{ template "installer-unit" . }}

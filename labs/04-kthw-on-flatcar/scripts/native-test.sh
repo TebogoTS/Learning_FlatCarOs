@@ -188,6 +188,30 @@ for _ in $(seq 1 20); do
 done
 if [ $rs = 1 ]; then ok "controller manager created a ReplicaSet"; else bad "no ReplicaSet created"; fi
 
+# Lab 05's add-on manifests, validated by a real API server (the same pinned hashes lab 05 uses):
+# CRDs and the controller are applied, then the plans and kured DaemonSet are checked server-side.
+L5=$LAB_DIR/../05-rke2-on-flatcar
+# shellcheck source=../../05-rke2-on-flatcar/artifacts.env
+. "$L5/artifacts.env"
+suc=https://github.com/rancher/system-upgrade-controller/releases/download/$SUC_VERSION
+pinned() { # URL SHA256 -> file path
+    local f
+    f=$N/$(basename "$1")
+    download "$1" "$f"
+    [ "$(sha256_of "$f")" = "$2" ] || die "hash mismatch for $1"
+    echo "$f"
+}
+crd=$(pinned "$suc/crd.yaml" "$SUC_CRD_SHA256")
+dep=$(pinned "$suc/system-upgrade-controller.yaml" "$SUC_DEPLOY_SHA256")
+rbac=$(pinned "https://raw.githubusercontent.com/kubereboot/kured/1.23.0/kured-rbac.yaml" "$KURED_RBAC_SHA256")
+check "system-upgrade-controller CRD applies" kc apply -f "$crd"
+check "system-upgrade-controller manifest applies" kc apply -f "$dep"
+check "SUC CRD becomes Established" kc wait --for=condition=Established crd/plans.upgrade.cattle.io --timeout=60s
+sed "s|__RKE2_VERSION_UPGRADE__|$RKE2_VERSION_UPGRADE|g" "$L5/manifests/suc-plans.yaml" >"$N/suc-plans.yaml"
+check "SUC plans (server-plan, agent-plan) are accepted by the CRD schema" kc apply --dry-run=server -f "$N/suc-plans.yaml"
+check "kured RBAC applies" kc apply -f "$rbac"
+check "kured DaemonSet is accepted" kc apply --dry-run=server -f "$L5/manifests/kured-ds.yaml"
+
 # Kubelet and kube-proxy: the configs must parse (strict decoding). They will then fail to reach a
 # container runtime or iptables here, which is not what this checks.
 ign_py file node-0 /var/lib/kubelet/kubelet-config.yaml "$RENDER" | rewrite >"$N/kubelet/kubelet-config.yaml"

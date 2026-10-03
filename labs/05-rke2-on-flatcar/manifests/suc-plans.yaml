@@ -1,0 +1,45 @@
+# system-upgrade-controller plans for lab 05, from the pattern in the RKE2 docs
+# (docs/upgrades/automated.md): server plan first, agent plan waits for it via `prepare`.
+# Differences from the docs' examples: a fixed `version` instead of a release channel, so the upgrade
+# is exactly the version pinned in versions.env (placeholder replaced by scripts/lab05.sh).
+---
+apiVersion: upgrade.cattle.io/v1
+kind: Plan
+metadata:
+  name: server-plan
+  namespace: system-upgrade
+spec:
+  concurrency: 1
+  cordon: true
+  nodeSelector:
+    matchExpressions:
+      - key: node-role.kubernetes.io/control-plane
+        operator: In
+        values:
+          - "true"
+  serviceAccountName: system-upgrade
+  upgrade:
+    image: rancher/rke2-upgrade
+  version: __RKE2_VERSION_UPGRADE__
+---
+apiVersion: upgrade.cattle.io/v1
+kind: Plan
+metadata:
+  name: agent-plan
+  namespace: system-upgrade
+spec:
+  concurrency: 1
+  cordon: true
+  nodeSelector:
+    matchExpressions:
+      - key: node-role.kubernetes.io/control-plane
+        operator: DoesNotExist
+  prepare:
+    args:
+      - prepare
+      - server-plan
+    image: rancher/rke2-upgrade
+  serviceAccountName: system-upgrade
+  upgrade:
+    image: rancher/rke2-upgrade
+  version: __RKE2_VERSION_UPGRADE__
